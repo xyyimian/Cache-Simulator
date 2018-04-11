@@ -17,6 +17,7 @@ import java.util.Queue;
 import java.util.Random;
 import java.util.Vector;
 
+import javax.print.DocFlavor.CHAR_ARRAY;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JFileChooser;
@@ -74,6 +75,11 @@ public class CCacheSim extends JFrame implements ActionListener{
 	private int csIndex, bsIndex, wayIndex, replaceIndex, prefetchIndex, writeIndex, allocIndex;
 	
 	//其它变量定义
+	
+	boolean isprefetch;
+	boolean isprefetching = false;	//判定是预取还是继续读文件
+	boolean isWriteAlloc;
+	
 	Random random = new Random();
 	static boolean[] dirty;
 	static boolean[][] valid;
@@ -108,9 +114,11 @@ public class CCacheSim extends JFrame implements ActionListener{
 	float missRate;
 	BufferedReader reader = null;
 	
-	int cs;		//actual cachesize
-	int bs;		//actual blocksize
-	int wayy;	//actual waynum
+	//对于设定对应的常量
+	
+	int cs;		//实际cache大小
+	int bs;		//实际块大小
+	int wayy;	//实际路数
 	
 	int wayynum;	
 	int blockNum;	
@@ -119,14 +127,19 @@ public class CCacheSim extends JFrame implements ActionListener{
 	int indexlen;
 	int taglen;
 	
+	//模拟器所需的内存空间
 	int[][] queue;
 	int[][]RU;
 	
+	//对于每个地址解析出来的字段
+	int address = 0;
+	char type = '3';
 	int addrTag;	//tag号
-	int addrIndex;	//组号
+	int addrIndex;	//组号或者索引
+	int blockNo;	//块号
+	int blockoffset;	//块内偏移
 	
-	
-	//建立对应组相应变量的引用
+	//建立每个地址解析出来对应组 的相应变量的引用
 	boolean []gvalid;
 	int[] gRU;
 	int[] gtag;
@@ -216,6 +229,14 @@ public class CCacheSim extends JFrame implements ActionListener{
 	 * 初始化 Cache 模拟器
 	 */
 	public void initCache() {
+		
+		if(prefetchIndex == 0) isprefetch = false;
+		else isprefetch = true;
+		
+		if(allocIndex == 0) isWriteAlloc = true;
+		else isWriteAlloc = false;
+		
+		isprefetching = false;
 		cs = csnum[csIndex];
 		bs = bsnum[bsIndex];
 		wayy = waynum[wayIndex];
@@ -291,7 +312,8 @@ public class CCacheSim extends JFrame implements ActionListener{
 		}
 		if(!hit){
 			addMissNum(type);
-			missNum++;
+			if(type == '1' && isWriteAlloc == false) return 0;	//写不命中时不按写分配直接退出不修改tag
+			
 			if(i != wayy){	//队列未满，直接在最后插入
 				gRU[i] = i+1;	//第i+1块插入队列
 				gvalid[gRU[i] - 1] = true;
@@ -312,6 +334,7 @@ public class CCacheSim extends JFrame implements ActionListener{
 	}
 	
 	private void addMissNum(char type){
+		missNum++;
 		switch (type) {
 		case '0':
 			readDataMissNum++;
@@ -339,8 +362,9 @@ public class CCacheSim extends JFrame implements ActionListener{
 			}
 		}
 		if(hit == false){
-			missNum ++;
 			addMissNum(type);
+			if(type == '1' && isWriteAlloc == false) return 0;	//写不命中时不按写分配直接退出不修改tag
+			
 			if(i != wayy){	//队列未满，直接在最后插入
 				gRU[i] = i+1;	//第i+1块插入队列
 				gvalid[gRU[i] - 1] = true;
@@ -370,8 +394,9 @@ public class CCacheSim extends JFrame implements ActionListener{
 			}
 		}
 		if(hit == false){
-			missNum++;
 			addMissNum(type);
+			if(type == '1' && isWriteAlloc == false) return 0;	//写不命中时不按写分配直接退出不修改tag
+			
 			int temp = random.nextInt(wayy);
 			gtag[temp] = addrTag;
 			gvalid[temp] = true;
@@ -381,37 +406,48 @@ public class CCacheSim extends JFrame implements ActionListener{
 	}
 	
 	
-	
-	
 	public void simExecStep() {
-		char type = '3';
-		int address = 0;
-		try{
-			String tempString = InstStream.get(InstIndex);
-			++InstIndex;
-			if(tempString!= null){
-				System.out.println(tempString);
-				visitMemNum++;
-				String strs[] = tempString.split(" ");
-				address = Integer.valueOf(strs[1],16);
-				type = strs[0].charAt(0);
+		if(isprefetching == false){
+			try{
+				String tempString = InstStream.get(InstIndex);
+				++InstIndex;
+				if(tempString!= null){
+					String strs[] = tempString.split(" ");
+					address = Integer.valueOf(strs[1],16);
+					type = strs[0].charAt(0);
+				}
+				else{
+					reader.close();
+				}
+			}catch (IOException e) {
+				System.out.println("file read errorsb");
 			}
-			else{
-				reader.close();
+
+			int hitsit = ProcessInst(address, type);
+			if(isprefetch == true  && hitsit == 0 && (type == '0' || type == '2')){	//预取策略，未命中且是读操作，
+				isprefetching = true;
+				address += bs;		//为下一次点击事件做准备
 			}
-		}catch (IOException e) {
-			System.out.println("file read errorsb");
 		}
-		//根据读到的地址确定一些量
+		else{
+			ProcessInst(address, type);
+			isprefetching = false;
+		}
+			
+	}
+	
+	int ProcessInst(int address, char type){
+		//根据读到的地址确定各字段的值
+		visitMemNum++;
 		addrTag = (address >>> offsetlen) / groupNum;	//tag号
 		addrIndex = (address >>> offsetlen) % groupNum ;	//组号
-		
+		blockNo = address >>> offsetlen;
+		blockoffset = address % (1 << offsetlen);
 		
 		//建立对应组相应变量的引用
 		gvalid = valid[addrIndex];
 		gRU = RU[addrIndex];
 		gtag = tag[addrIndex];
-		
 		
 		switch(type){
 		case'0':
@@ -446,11 +482,14 @@ public class CCacheSim extends JFrame implements ActionListener{
 		String whetherhit[] = {"未命中","已命中"};
 		visitTypelb.setText("访问类型: " + visittype[type - '0']);
 		addrlb.setText("地址: " + address);
-		blockNumlb.setText("块号: " + Integer.toString(address >>> offsetlen));
-		blockoffsetld.setText("块内地址: " + Integer.toString(address % (1 << offsetlen)));;
+		blockNumlb.setText("块号: " + blockNo);
+		blockoffsetld.setText("块内地址: " + blockoffset);;
 		indexlb.setText("索引: " + addrIndex);
 		hitsituationlb.setText("命中情况: " + whetherhit[hitsit]);
+		
+		return hitsit;
 	}
+
 	void freshValue(){
 		String[] s = {"不命中次数:\t","不命中率:\t"};
 		NumberFormat nt = NumberFormat.getPercentInstance();
@@ -477,8 +516,6 @@ public class CCacheSim extends JFrame implements ActionListener{
 	 */
 	public void simExecAll() {
 		while(InstIndex != InstNum){
-			if(InstIndex == 1078)
-				System.out.println("sb!!");
 			simExecStep();
 		}
 		resultCompute();
