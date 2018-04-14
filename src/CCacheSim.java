@@ -314,10 +314,15 @@ public class CCacheSim extends JFrame implements ActionListener{
 			addMissNum(type);
 			if(type == '1' && isWriteAlloc == false) return 0;	//写不命中时不按写分配直接退出不修改tag
 			
-			if(i != wayy){	//队列未满，直接在最后插入
-				gRU[i] = i+1;	//第i+1块插入队列
-				gvalid[gRU[i] - 1] = true;
-				gtag[gRU[i] - 1] = addrTag;
+			if(i != wayy){	//队列未满，队首插入
+				
+				for(int j = i; j > 0; --j){
+					gRU[j] = gRU[j - 1];
+				}
+				
+				gRU[0] = i + 1;
+				gvalid[gRU[0] - 1] = true;
+				gtag[gRU[0] - 1] = addrTag;
 			}
 			else{	//队列已满，删除队尾插入队首
 				int temp = gRU[wayy - 1];
@@ -366,9 +371,12 @@ public class CCacheSim extends JFrame implements ActionListener{
 			if(type == '1' && isWriteAlloc == false) return 0;	//写不命中时不按写分配直接退出不修改tag
 			
 			if(i != wayy){	//队列未满，直接在最后插入
-				gRU[i] = i+1;	//第i+1块插入队列
-				gvalid[gRU[i] - 1] = true;
-				gtag[gRU[i] - 1] = addrTag;
+				for(int j = i; j > 0; --j){
+					gRU[j] = gRU[j - 1];
+				}
+				gRU[0] = i+1;	//第i+1块插入队列
+				gvalid[gRU[0] - 1] = true;
+				gtag[gRU[0] - 1] = addrTag;
 			}
 			else{	//队列已满，删除队尾插入队首
 				int temp = gRU[wayy - 1];
